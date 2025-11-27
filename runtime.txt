@@ -1,0 +1,7 @@
+python-3.11
+Flask
+docxtpl
+python-docx
+gunicorn
+docx2pdf
+pywin32; sys_platform == 'win32'
