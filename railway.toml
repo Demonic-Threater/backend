@@ -1,5 +1,0 @@
-[build]
-nixpacks = true
-
-[deploy]
-start = "gunicorn app:app"
