@@ -5,10 +5,9 @@ from docx import Document
 import tempfile
 import json
 import os
-import subprocess
-import shutil
 import threading
 import time
+import aspose.words as aw   # PURE PYTHON PDF CONVERTER
 
 # -------------------------
 # CONFIG
@@ -26,16 +25,8 @@ CORS(app, supports_credentials=True, origins=[FRONTEND_ORIGIN])
 
 
 # -------------------------
-# HELPERS
+# CLEANUP
 # -------------------------
-def find_soffice():
-    for exe in ["soffice", "libreoffice"]:
-        p = shutil.which(exe)
-        if p:
-            return p
-    return None
-
-
 def remove_later(paths, delay):
     def _worker(files):
         time.sleep(delay)
@@ -79,12 +70,12 @@ def generate():
         if len(subjects) == 0:
             return jsonify({"error": "No subjects provided"}), 400
 
-        # Template existence check
+        # Template check
         template_path = os.path.join(os.path.dirname(__file__), TEMPLATE_FILENAME)
         if not os.path.exists(template_path):
-            return jsonify({"error": "template.docx missing on server"}), 500
+            return jsonify({"error": "template.docx missing"}), 500
 
-        # Build merged doc
+        # Build merged DOCX
         merged_doc = Document()
         temp_pages = []
 
@@ -115,57 +106,22 @@ def generate():
             if index < len(subjects) - 1:
                 merged_doc.add_page_break()
 
-        # Save merged docx
-        merged_docx = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
-        merged_doc.save(merged_docx.name)
-        merged_docx.close()
+        # Save merged DOCX
+        merged_file = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
+        merged_doc.save(merged_file.name)
+        merged_file.close()
 
-        # Create output PDF temp path
-        pdf_out = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-        pdf_out.close()
+        # Convert DOCX → PDF using Aspose
+        pdf_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+        pdf_file.close()
 
-        # Convert using LibreOffice
-        soffice = find_soffice()
-        if not soffice:
-            remove_later(temp_pages + [merged_docx.name, pdf_out.name], CLEANUP_DELAY)
-            return jsonify({"error": "LibreOffice not installed"}), 500
+        doc = aw.Document(merged_file.name)
+        doc.save(pdf_file.name)
 
-        outdir = os.path.dirname(pdf_out.name)
-        try:
-            subprocess.run(
-                [
-                    soffice,
-                    "--headless",
-                    "--convert-to",
-                    "pdf",
-                    "--outdir",
-                    outdir,
-                    merged_docx.name,
-                ],
-                check=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                timeout=40,
-            )
-        except Exception as e:
-            remove_later(temp_pages + [merged_docx.name, pdf_out.name], CLEANUP_DELAY)
-            return jsonify({"error": "PDF conversion failed", "details": str(e)}), 500
-
-        # Expected output path
-        expected_pdf = os.path.splitext(merged_docx.name)[0] + ".pdf"
-
-        if not os.path.exists(expected_pdf):
-            remove_later(temp_pages + [merged_docx.name, pdf_out.name], CLEANUP_DELAY)
-            return jsonify({"error": "PDF missing after convert"}), 500
-
-        # Move generated PDF to final path
-        os.replace(expected_pdf, pdf_out.name)
-
-        # Cleanup temp DOCX after return
-        remove_later(temp_pages + [merged_docx.name], CLEANUP_DELAY)
+        remove_later(temp_pages + [merged_file.name], CLEANUP_DELAY)
 
         return send_file(
-            pdf_out.name,
+            pdf_file.name,
             as_attachment=True,
             download_name=f"{student_name}_frontpage.pdf"
         )
@@ -174,12 +130,11 @@ def generate():
         return jsonify({"error": "Server error", "details": str(e)}), 500
 
 
-# -------------------------
-# MAIN
-# -------------------------
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
+
+
 
 
 
