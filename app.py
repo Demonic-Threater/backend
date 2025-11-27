@@ -2,9 +2,11 @@ from flask import Flask, request, send_file
 from flask_cors import CORS
 from docxtpl import DocxTemplate
 from docx import Document
+from docx2pdf import convert
 import tempfile
 import json
 import os
+import subprocess
 
 app = Flask(__name__)
 CORS(app)  # Allow requests from frontend
@@ -61,8 +63,17 @@ def generate():
 
     # Convert to PDF
     temp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+    
+
+    subprocess.run([
+    "libreoffice",
+    "--headless",
+    "--convert-to", "pdf",
+    "--outdir", os.path.dirname(temp_pdf.name),
+    temp_docx.name
+     ], check=True)
+
     os.unlink(temp_docx.name)
 
     return send_file(temp_pdf.name, as_attachment=True,
                      download_name=f"{student_name}_frontpage.pdf")
-
