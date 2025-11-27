@@ -1,9 +1,0 @@
-flask
-gunicorn
-python-docx
-docxtpl
-pypandoc
-lxml
-flask-cors
-
-
