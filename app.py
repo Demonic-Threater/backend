@@ -44,14 +44,12 @@ def remove_later(paths, delay):
 # -------------------------
 # ROUTES
 # -------------------------
-@app.route("/health")
-def health():
-    return jsonify({"status": "ok"})
-
-
 @app.route("/generate", methods=["POST"])
 def generate():
     try:
+        # -----------------------------
+        # Parse form data safely
+        # -----------------------------
         student_name = request.form.get("student_name", "Student")
         class_name = request.form.get("class", "")
         registration_no = request.form.get("registration_no", "")
@@ -59,66 +57,81 @@ def generate():
         start_year = request.form.get("start_year", "")
         end_year = request.form.get("end_year", "")
 
-        # Parse subjects
+        # Subjects parsing
         try:
             subjects = json.loads(request.form.get("subjects", "[]"))
-            if not isinstance(subjects, list):
-                raise ValueError
-        except:
-            return jsonify({"error": "Invalid subjects JSON"}), 400
+            if not isinstance(subjects, list) or not subjects:
+                return jsonify({"error": "Invalid or empty subjects list"}), 400
+        except Exception as e:
+            return jsonify({"error": "Invalid subjects JSON", "details": str(e)}), 400
 
-        if len(subjects) == 0:
-            return jsonify({"error": "No subjects provided"}), 400
-
-        # Template check
+        # -----------------------------
+        # Check template
+        # -----------------------------
         template_path = os.path.join(os.path.dirname(__file__), TEMPLATE_FILENAME)
         if not os.path.exists(template_path):
             return jsonify({"error": "template.docx missing"}), 500
 
-        # Build merged DOCX
+        # -----------------------------
+        # Merge DOCX
+        # -----------------------------
         merged_doc = Document()
-        temp_pages = []
+        temp_files = []
 
-        for index, subject in enumerate(subjects):
-            ctx = {
-                "student_name": student_name,
-                "subject": subject,
-                "class": class_name,
-                "registration_no": registration_no,
-                "roll_no": roll_no,
-                "start_year": start_year,
-                "end_year": end_year,
-            }
+        for idx, subject in enumerate(subjects):
+            try:
+                ctx = {
+                    "student_name": student_name,
+                    "subject": subject,
+                    "class": class_name,
+                    "registration_no": registration_no,
+                    "roll_no": roll_no,
+                    "start_year": start_year,
+                    "end_year": end_year,
+                }
 
-            tpl = DocxTemplate(template_path)
-            tpl.render(ctx)
+                tpl = DocxTemplate(template_path)
+                tpl.render(ctx)
 
-            tmp_page = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
-            tpl.save(tmp_page.name)
-            tmp_page.close()
+                tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
+                tpl.save(tmp_file.name)
+                tmp_file.close()
+                temp_files.append(tmp_file.name)
 
-            temp_pages.append(tmp_page.name)
+                page_doc = Document(tmp_file.name)
+                for element in page_doc.element.body:
+                    merged_doc.element.body.append(element)
 
-            page_doc = Document(tmp_page.name)
-            for element in page_doc.element.body:
-                merged_doc.element.body.append(element)
+                if idx < len(subjects) - 1:
+                    merged_doc.add_page_break()
 
-            if index < len(subjects) - 1:
-                merged_doc.add_page_break()
+            except Exception as e:
+                logging.exception(f"Error processing subject '{subject}'")
+                return jsonify({"error": f"Failed to process subject '{subject}'", "details": str(e)}), 500
 
-        # Save merged DOCX
         merged_file = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
         merged_doc.save(merged_file.name)
         merged_file.close()
+        temp_files.append(merged_file.name)
 
-        # Convert DOCX → PDF using Aspose
+        # -----------------------------
+        # Convert DOCX → PDF safely
+        # -----------------------------
         pdf_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
         pdf_file.close()
+        try:
+            doc = aw.Document(merged_file.name)
+            doc.save(pdf_file.name)
+            temp_files.append(pdf_file.name)
+        except Exception as e:
+            logging.exception("PDF conversion failed")
+            remove_later(temp_files, 0)
+            return jsonify({"error": "PDF conversion failed", "details": str(e)}), 500
 
-        doc = aw.Document(merged_file.name)
-        doc.save(pdf_file.name)
-
-        remove_later(temp_pages + [merged_file.name], CLEANUP_DELAY)
+        # -----------------------------
+        # Cleanup old temp files asynchronously
+        # -----------------------------
+        remove_later(temp_files[:-1], CLEANUP_DELAY)  # keep PDF for download
 
         return send_file(
             pdf_file.name,
@@ -127,13 +140,8 @@ def generate():
         )
 
     except Exception as e:
+        logging.exception("Unexpected server error in /generate")
         return jsonify({"error": "Server error", "details": str(e)}), 500
-
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
-
 
 
 
