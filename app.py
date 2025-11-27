@@ -2,18 +2,16 @@ from flask import Flask, request, send_file
 from flask_cors import CORS
 from docxtpl import DocxTemplate
 from docx import Document
-from docx2pdf import convert
 import tempfile
 import json
 import os
 import subprocess
 
 app = Flask(__name__)
-CORS(app)  # Allow requests from frontend
+CORS(app)
 
 @app.route('/generate', methods=['POST'])
 def generate():
-    # Extract form data
     student_name = request.form.get('student_name', 'Student')
     class_name = request.form.get('class', '')
     registration_no = request.form.get('registration_no', '')
@@ -24,7 +22,7 @@ def generate():
 
     template_path = os.path.join(os.path.dirname(__file__), "template.docx")
 
-    merged_doc = Document()  # Final document
+    merged_doc = Document()
 
     for idx, subject in enumerate(subjects):
         context = {
@@ -40,40 +38,40 @@ def generate():
         doc = DocxTemplate(template_path)
         doc.render(context)
 
-        # Save temp page
         tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
         doc.save(tmp_file.name)
         tmp_file.close()
 
-        # Append to merged_doc
         tmp_doc = Document(tmp_file.name)
         for element in tmp_doc.element.body:
             merged_doc.element.body.append(element)
 
-        # Add page break except last page
         if idx < len(subjects) - 1:
             merged_doc.add_page_break()
 
         os.unlink(tmp_file.name)
 
-    # Save merged doc to temp
+    # Save merged DOCX
     temp_docx = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
     merged_doc.save(temp_docx.name)
     temp_docx.close()
 
-    # Convert to PDF
-    temp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-    
+    # LibreOffice will produce <docname>.pdf in same folder
+    output_dir = os.path.dirname(temp_docx.name)
 
     subprocess.run([
-    "libreoffice",
-    "--headless",
-    "--convert-to", "pdf",
-    "--outdir", os.path.dirname(temp_pdf.name),
-    temp_docx.name
-     ], check=True)
+        "libreoffice",
+        "--headless",
+        "--convert-to", "pdf",
+        "--outdir", output_dir,
+        temp_docx.name
+    ], check=True)
+
+    # Expected pdf path
+    pdf_file_path = temp_docx.name.replace(".docx", ".pdf")
 
     os.unlink(temp_docx.name)
 
-    return send_file(temp_pdf.name, as_attachment=True,
+    return send_file(pdf_file_path, as_attachment=True,
                      download_name=f"{student_name}_frontpage.pdf")
+
