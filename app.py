@@ -2,7 +2,6 @@ from flask import Flask, request, send_file
 from flask_cors import CORS
 from docxtpl import DocxTemplate
 from docx import Document
-from docx2pdf import convert
 import tempfile
 import json
 import os
@@ -62,8 +61,8 @@ def generate():
 
     # Convert to PDF
     temp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-    convert(temp_docx.name, temp_pdf.name)
     os.unlink(temp_docx.name)
 
     return send_file(temp_pdf.name, as_attachment=True,
                      download_name=f"{student_name}_frontpage.pdf")
+
