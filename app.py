@@ -38,40 +38,39 @@ def generate():
         doc = DocxTemplate(template_path)
         doc.render(context)
 
-        tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
-        doc.save(tmp_file.name)
-        tmp_file.close()
+        t = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
+        doc.save(t.name)
+        t.close()
 
-        tmp_doc = Document(tmp_file.name)
+        tmp_doc = Document(t.name)
         for element in tmp_doc.element.body:
             merged_doc.element.body.append(element)
 
         if idx < len(subjects) - 1:
             merged_doc.add_page_break()
 
-        os.unlink(tmp_file.name)
+        os.unlink(t.name)
 
     # Save merged DOCX
-    temp_docx = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
-    merged_doc.save(temp_docx.name)
-    temp_docx.close()
+    out_doc = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
+    merged_doc.save(out_doc.name)
+    out_doc.close()
 
-    # LibreOffice will produce <docname>.pdf in same folder
-    output_dir = os.path.dirname(temp_docx.name)
-
+    # Convert to PDF — libreoffice will create SAME FILENAME with .pdf
     subprocess.run([
         "libreoffice",
         "--headless",
         "--convert-to", "pdf",
-        "--outdir", output_dir,
-        temp_docx.name
+        "--outdir", "/tmp",
+        out_doc.name
     ], check=True)
 
-    # Expected pdf path
-    pdf_file_path = temp_docx.name.replace(".docx", ".pdf")
+    # Find the generated PDF
+    pdf_path = out_doc.name.replace(".docx", ".pdf")
 
-    os.unlink(temp_docx.name)
+    # Remove DOCX
+    os.unlink(out_doc.name)
 
-    return send_file(pdf_file_path, as_attachment=True,
+    return send_file(pdf_path, as_attachment=True,
                      download_name=f"{student_name}_frontpage.pdf")
 
