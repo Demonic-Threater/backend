@@ -18,8 +18,16 @@ FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "*")  # set to your frontend
 TEMPLATE_FILENAME = os.environ.get("TEMPLATE_FILENAME", "template.docx")
 CLEANUP_DELAY = int(os.environ.get("CLEANUP_DELAY", "30"))  # seconds to wait before deleting temp files
 
-app = Flask(__name__)
-CORS(app, origins=FRONTEND_ORIGIN)
+FRONTEND = "https://academic-r7bgbxe7k-dipros-projects-b7e275bc.vercel.app"
+
+CORS(
+    app,
+    resources={r"/*": {"origins": FRONTEND}},
+    supports_credentials=True,
+    allow_headers=["Content-Type"],
+    methods=["GET", "POST", "OPTIONS"]
+)
+
 
 
 # -------------------------
@@ -183,5 +191,6 @@ def generate():
             os.replace(expected_pdf, out_pdf.name)
         except Exception:
            
+
 
 
