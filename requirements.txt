@@ -3,3 +3,4 @@ flask-cors
 docxtpl
 python-docx
 docx2pdf
+gunicorn
