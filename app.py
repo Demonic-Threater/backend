@@ -9,55 +9,49 @@ import subprocess
 import shutil
 import threading
 import time
-import traceback
 
 # -------------------------
-# Config
+# CONFIG
 # -------------------------
-FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "*")  # set to your frontend domain in production
-TEMPLATE_FILENAME = os.environ.get("TEMPLATE_FILENAME", "template.docx")
-CLEANUP_DELAY = int(os.environ.get("CLEANUP_DELAY", "30"))  # seconds to wait before deleting temp files
-
-FRONTEND = "https://academic-r7bgbxe7k-dipros-projects-b7e275bc.vercel.app"
-
-CORS(
-    app,
-    resources={r"/*": {"origins": FRONTEND}},
-    supports_credentials=True,
-    allow_headers=["Content-Type"],
-    methods=["GET", "POST", "OPTIONS"]
+FRONTEND_ORIGIN = os.environ.get(
+    "FRONTEND_ORIGIN",
+    "https://academic-r7bgbxe7k-dipros-projects-b7e275bc.vercel.app"
 )
 
+TEMPLATE_FILENAME = "template.docx"
+CLEANUP_DELAY = 20
+
+app = Flask(__name__)
+CORS(app, supports_credentials=True, origins=[FRONTEND_ORIGIN])
 
 
 # -------------------------
-# Helpers
+# HELPERS
 # -------------------------
-def find_soffice_executable():
-    """Return path to 'soffice' or 'libreoffice' if available, else None."""
-    for name in ("soffice", "libreoffice"):
-        path = shutil.which(name)
-        if path:
-            return path
+def find_soffice():
+    for exe in ["soffice", "libreoffice"]:
+        p = shutil.which(exe)
+        if p:
+            return p
     return None
 
 
-def background_remove(files, delay=CLEANUP_DELAY):
-    """Remove given file paths after delay seconds in a background thread."""
-    def _worker(paths, wait):
-        time.sleep(wait)
-        for p in paths:
+def remove_later(paths, delay):
+    def _worker(files):
+        time.sleep(delay)
+        for f in files:
             try:
-                if os.path.exists(p):
-                    os.remove(p)
-            except Exception:
+                if os.path.exists(f):
+                    os.remove(f)
+            except:
                 pass
-    t = threading.Thread(target=_worker, args=(files, delay), daemon=True)
+
+    t = threading.Thread(target=_worker, args=(paths,), daemon=True)
     t.start()
 
 
 # -------------------------
-# Routes
+# ROUTES
 # -------------------------
 @app.route("/health")
 def health():
@@ -67,36 +61,34 @@ def health():
 @app.route("/generate", methods=["POST"])
 def generate():
     try:
-        # Required fields (provide defaults as needed)
-        student_name = request.form.get("student_name", "").strip() or "Student"
-        class_name = request.form.get("class", "").strip()
-        registration_no = request.form.get("registration_no", "").strip()
-        roll_no = request.form.get("roll_no", "").strip()
-        start_year = request.form.get("start_year", "").strip()
-        end_year = request.form.get("end_year", "").strip()
+        student_name = request.form.get("student_name", "Student")
+        class_name = request.form.get("class", "")
+        registration_no = request.form.get("registration_no", "")
+        roll_no = request.form.get("roll_no", "")
+        start_year = request.form.get("start_year", "")
+        end_year = request.form.get("end_year", "")
 
-        # subjects expected as JSON array string
-        subjects_raw = request.form.get("subjects", "[]")
+        # Parse subjects
         try:
-            subjects = json.loads(subjects_raw)
+            subjects = json.loads(request.form.get("subjects", "[]"))
             if not isinstance(subjects, list):
-                raise ValueError("subjects must be a JSON array")
-        except Exception as e:
-            return jsonify({"error": "Invalid subjects JSON", "details": str(e)}), 400
+                raise ValueError
+        except:
+            return jsonify({"error": "Invalid subjects JSON"}), 400
 
         if len(subjects) == 0:
             return jsonify({"error": "No subjects provided"}), 400
 
-        # Template path
+        # Template existence check
         template_path = os.path.join(os.path.dirname(__file__), TEMPLATE_FILENAME)
         if not os.path.exists(template_path):
-            return jsonify({"error": "Template not found on server", "template_path": template_path}), 500
+            return jsonify({"error": "template.docx missing on server"}), 500
 
-        # Create merged doc
+        # Build merged doc
         merged_doc = Document()
+        temp_pages = []
 
-        tmp_docx_files = []
-        for idx, subject in enumerate(subjects):
+        for index, subject in enumerate(subjects):
             ctx = {
                 "student_name": student_name,
                 "subject": subject,
@@ -104,52 +96,41 @@ def generate():
                 "registration_no": registration_no,
                 "roll_no": roll_no,
                 "start_year": start_year,
-                "end_year": end_year
+                "end_year": end_year,
             }
 
             tpl = DocxTemplate(template_path)
             tpl.render(ctx)
 
-            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
-            tpl.save(tmp.name)
-            tmp.close()
-            tmp_docx_files.append(tmp.name)
+            tmp_page = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
+            tpl.save(tmp_page.name)
+            tmp_page.close()
 
-            # Append content
-            tmp_doc = Document(tmp.name)
-            for element in tmp_doc.element.body:
+            temp_pages.append(tmp_page.name)
+
+            page_doc = Document(tmp_page.name)
+            for element in page_doc.element.body:
                 merged_doc.element.body.append(element)
 
-            if idx < len(subjects) - 1:
-                # add a page break between pages
+            if index < len(subjects) - 1:
                 merged_doc.add_page_break()
 
-        # Save merged docx to temp file
+        # Save merged docx
         merged_docx = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
         merged_doc.save(merged_docx.name)
         merged_docx.close()
 
-        # Prepare output pdf path
-        out_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-        out_pdf.close()
+        # Create output PDF temp path
+        pdf_out = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+        pdf_out.close()
 
-        # Convert with LibreOffice / soffice
-        soffice = find_soffice_executable()
+        # Convert using LibreOffice
+        soffice = find_soffice()
         if not soffice:
-            # Cleanup docx files we created
-            files_to_remove = tmp_docx_files + [merged_docx.name]
-            background_remove(files_to_remove, delay=5)
-            return (
-                jsonify(
-                    {
-                        "error": "LibreOffice (soffice/libreoffice) not found on server. PDF conversion unavailable."
-                    }
-                ),
-                500,
-            )
+            remove_later(temp_pages + [merged_docx.name, pdf_out.name], CLEANUP_DELAY)
+            return jsonify({"error": "LibreOffice not installed"}), 500
 
-        # LibreOffice outputs pdf to same directory as input; call with outdir
-        outdir = os.path.dirname(out_pdf.name)
+        outdir = os.path.dirname(pdf_out.name)
         try:
             subprocess.run(
                 [
@@ -164,33 +145,44 @@ def generate():
                 check=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                timeout=60,
+                timeout=40,
             )
-        except subprocess.CalledProcessError as e:
-            # conversion failed
-            details = e.stderr.decode("utf-8", errors="ignore") if e.stderr else str(e)
-            files_to_remove = tmp_docx_files + [merged_docx.name, out_pdf.name]
-            background_remove(files_to_remove, delay=5)
-            app.logger.error("LibreOffice conversion failed: %s", details)
-            return jsonify({"error": "PDF conversion failed", "details": details}), 500
-        except subprocess.TimeoutExpired:
-            files_to_remove = tmp_docx_files + [merged_docx.name, out_pdf.name]
-            background_remove(files_to_remove, delay=5)
-            return jsonify({"error": "PDF conversion timed out"}), 500
+        except Exception as e:
+            remove_later(temp_pages + [merged_docx.name, pdf_out.name], CLEANUP_DELAY)
+            return jsonify({"error": "PDF conversion failed", "details": str(e)}), 500
 
-        # LibreOffice names pdf identical to docx basename
+        # Expected output path
         expected_pdf = os.path.splitext(merged_docx.name)[0] + ".pdf"
-        if not os.path.exists(expected_pdf):
-            # Maybe conversion failed silently
-            files_to_remove = tmp_docx_files + [merged_docx.name, out_pdf.name]
-            background_remove(files_to_remove, delay=5)
-            return jsonify({"error": "Converted PDF not found", "expected": expected_pdf}), 500
 
-        # Move/rename expected_pdf to out_pdf.name
-        try:
-            os.replace(expected_pdf, out_pdf.name)
-        except Exception:
-           
+        if not os.path.exists(expected_pdf):
+            remove_later(temp_pages + [merged_docx.name, pdf_out.name], CLEANUP_DELAY)
+            return jsonify({"error": "PDF missing after convert"}), 500
+
+        # Move generated PDF to final path
+        os.replace(expected_pdf, pdf_out.name)
+
+        # Cleanup temp DOCX after return
+        remove_later(temp_pages + [merged_docx.name], CLEANUP_DELAY)
+
+        return send_file(
+            pdf_out.name,
+            as_attachment=True,
+            download_name=f"{student_name}_frontpage.pdf"
+        )
+
+    except Exception as e:
+        return jsonify({"error": "Server error", "details": str(e)}), 500
+
+
+# -------------------------
+# MAIN
+# -------------------------
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
+
+
+
 
 
 
